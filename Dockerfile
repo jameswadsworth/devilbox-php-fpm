@@ -38,63 +38,130 @@ RUN set -eux; \
     ; \
     rm -rf /var/lib/apt/lists/*; \
     sed -i '/imklog/d' /etc/rsyslog.conf
+    
+# -----------------------------------------------------------------------------
+# 1.5. Apply Official PHP2Shell Backport (PHP 8.1 & 7.4 only)
+# -----------------------------------------------------------------------------
+RUN set -eux; \
+    PHP_MAJOR_MINOR=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'); \
+    PATCH_FILE=""; \
+    if [ "$PHP_MAJOR_MINOR" = "8.1" ]; then \
+        PATCH_FILE="php-8.1-enhanced-universal.patch"; \
+    elif [ "$PHP_MAJOR_MINOR" = "7.4" ]; then \
+        PATCH_FILE="php-7.4-enhanced-universal.patch"; \
+    fi; \
+    if [ -n "$PATCH_FILE" ]; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+            $PHPIZE_DEPS \
+            patch \
+            curl \
+            ca-certificates \
+            libargon2-dev \
+            libcurl4-openssl-dev \
+            libedit-dev \
+            libonig-dev \
+            libreadline-dev \
+            libsodium-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libxml2-dev \
+            zlib1g-dev \
+        ; \
+        debMultiarch="$(dpkg-architecture --query DEB_BUILD_MULTIARCH)"; \
+        if [ ! -d /usr/include/curl ] && [ ! -e /usr/local/include/curl ]; then \
+            ln -sT "/usr/include/$debMultiarch/curl" /usr/local/include/curl; \
+        fi; \
+        export CFLAGS="$PHP_CFLAGS" CPPFLAGS="$PHP_CPPFLAGS" LDFLAGS="$PHP_LDFLAGS"; \
+        docker-php-source extract; \
+        cd /usr/src/php; \
+        curl -fsSL -o /tmp/php2shell.patch "https://raw.githubusercontent.com/Anton-Barinov/php2shell-patches/main/patches/${PATCH_FILE}"; \
+        patch -p1 --batch < /tmp/php2shell.patch; \
+        ./configure $(php-config --configure-options); \
+        make -j "$(nproc)"; \
+        make install; \
+        make clean; \
+        cd /; \
+        docker-php-source delete; \
+        rm -f /tmp/php2shell.patch; \
+        apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
+            patch \
+            libargon2-dev \
+            libcurl4-openssl-dev \
+            libedit-dev \
+            libonig-dev \
+            libreadline-dev \
+            libsodium-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libxml2-dev \
+            zlib1g-dev \
+        ; \
+        rm -rf /var/lib/apt/lists/*; \
+    fi   
 
 # -----------------------------------------------------------------------------
 # 2. Compile Extensions via Official Installer Helper
 # -----------------------------------------------------------------------------
 ADD --chmod=0755 https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
 
-RUN install-php-extensions \
-    apcu \
-    bcmath \
-    bz2 \
-    calendar \
-    dba \
-    enchant \
-    exif \
-    ffi \
-    ftp \
-    gd \
-    gettext \
-    gmp \
-    igbinary \
-    imagick \
-    imap \
-    intl \
-    ldap \
-    lz4 \
-    lzf \
-    memcache \
-    memcached \
-    mongodb \
-    msgpack \
-    mysqli \
-    oauth \
-    opcache \
-    pcntl \
-    pdo_mysql \
-    pdo_pgsql \
-    pgsql \
-    pspell \
-    rdkafka \
-    redis \
-    shmop \
-    snmp \
-    soap \
-    sockets \
-    solr \
-    sysvmsg \
-    sysvsem \
-    sysvshm \
-    tidy \
-    uploadprogress \
-    uuid \
-    xdebug \
-    xlswriter \
-    xsl \
-    yaml \
-    zip \
-    zstd
+RUN set -eux; \
+    EXTS=" \
+        apcu \
+        bcmath \
+        bz2 \
+        calendar \
+        dba \
+        enchant \
+        exif \
+        ffi \
+        ftp \
+        gd \
+        gettext \
+        gmp \
+        igbinary \
+        imagick \
+        imap \
+        intl \
+        ldap \
+        lz4 \
+        lzf \
+        memcached \
+        mongodb \
+        msgpack \
+        mysqli \
+        oauth \
+        opcache \
+        pcntl \
+        pdo_mysql \
+        pdo_pgsql \
+        pgsql \
+        pspell \
+        rdkafka \
+        redis \
+        shmop \
+        snmp \
+        soap \
+        sockets \
+        solr \
+        sysvmsg \
+        sysvsem \
+        sysvshm \
+        tidy \
+        uploadprogress \
+        uuid \
+        xdebug \
+        xlswriter \
+        xsl \
+        yaml \
+        zip \
+        zstd \
+    "; \
+    # Legacy PECL memcache only compiles on PHP < 8.5
+    if [ "$(php -r 'echo version_compare(PHP_VERSION, "8.5.0", "<") ? 1 : 0;')" = "1" ]; then \
+        EXTS="${EXTS} memcache"; \
+    fi; \
+    install-php-extensions ${EXTS}
 
 # -----------------------------------------------------------------------------
 # 3. Base Utilities (Composer & mhsendmail)
@@ -232,6 +299,16 @@ RUN chmod +x /usr/local/bin/webpack-cli
 # -----------------------------------------------------------------------------
 ENV COMPOSER_HOME="/usr/local/composer"
 ENV PATH="/usr/local/composer/vendor/bin:${PATH}"
+
+RUN set -eux; \
+    PHP_MAJOR_MINOR=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'); \
+    if [ "$PHP_MAJOR_MINOR" = "8.1" ]; then \
+        PHPUNIT_URL="https://phar.phpunit.de/phpunit-10.phar"; \
+    else \
+        PHPUNIT_URL="https://phar.phpunit.de/phpunit-11.phar"; \
+    fi; \
+    curl -fsSL --connect-timeout 15 -o /usr/local/bin/phpunit "$PHPUNIT_URL"; \
+    chmod +x /usr/local/bin/phpunit
 
 # 1. WordPress CLI (GitHub CDN)
 RUN curl -sSL --connect-timeout 15 -o /usr/local/bin/wp \
