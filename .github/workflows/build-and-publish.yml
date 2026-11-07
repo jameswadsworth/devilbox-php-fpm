@@ -25,6 +25,11 @@ jobs:
       matrix:
         php-version: ["5.6", "7.4"]
         target: ["prod", "work"]
+        include:
+          - php-version: "5.6"
+            base-os: "stretch"
+          - php-version: "7.4"
+            base-os: "bullseye"
 
     steps:
       - name: Checkout repository
@@ -53,6 +58,7 @@ jobs:
           push: true
           build-args: |
             PHP_VERSION=${{ matrix.php-version }}
+            BASE_OS=${{ matrix.base-os }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.php-version }}-${{ matrix.target }}
           cache-from: type=gha
